@@ -1,0 +1,4 @@
+[[hooks]]
+stage = "pre_build"
+command = "bunx"
+command_arguments = ["tailwindcss", "-i", "src/global.css", "-o", "target/tailwind/output.css"]
