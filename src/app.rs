@@ -4,13 +4,10 @@ use leptos::*;
 
 use derive_more::*;
 use itertools::Itertools;
-use std::ops::Deref;
-
 use base64::{prelude::*, Engine};
 use jugo::{BoxPuzzle, Piece, Puzzle};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
-
 use macros::return_with_try;
 
 #[rustfmt::skip]
@@ -55,8 +52,9 @@ impl<T: Piece> SeedablePuzzle<T> {
 
 #[component]
 pub fn App() -> impl IntoView {
-    let (puzzle, set_puzzle) = create_signal(SeedablePuzzle::<u8>::new((4, 4)));
-    let (history, set_history) = create_signal(String::new());
+    let puzzle = create_rw_signal(SeedablePuzzle::<u8>::new((4, 4)));
+    let history = create_rw_signal(String::new());
+    let dev_mode = create_rw_signal(false);
 
     let history_ref = create_node_ref::<Input>();
     create_effect(move |_| {
@@ -78,68 +76,88 @@ pub fn App() -> impl IntoView {
                 .join("\n")
         })
     };
+
     let on_keydown = move |event: KeyboardEvent| return_with_try! {
         let key = event.key();
 
         if let Some(&idx) = KEY_IDX_MAP.get(&key) {
-            let moved_for = set_puzzle
+            let moved_for = puzzle
                 .try_update(move |p| p.slide_from(idx))?
                 .unwrap_or(0);
 
             if moved_for != 0 {
-                set_history.update(|history| history.push_str(&key));
+                history.update(|history| history.push_str(&key));
             }
-        } else if key == " " {
-            set_puzzle.update(|p| *p = SeedablePuzzle::new(p.shape()));
-            set_history.update(|history| history.clear());
+        }
+        
+        match key.as_ref() {
+            " " => {
+                puzzle.update(|p| *p = SeedablePuzzle::new(p.shape()));
+                history.update(|history| history.clear());
+            }
+            "D" => {
+                dev_mode.update(|dev_mode| *dev_mode = !*dev_mode);
+            }
+            _ => {}
         }
     };
 
-    let render = move |((x, y), piece)| {
+    let render_piece = |((x, y), piece)| {
         let solved = (x + 1) + (y * 4) == piece as usize;
 
         let colors = match solved {
-            true => "bg-white text-black",
-            false => "bg-black text-white",
+            true => "bg-neutral-100 dark:bg-neutral-200 text-neutral-800",
+            false => "bg-neutral-900 dark:bg-neutral-800 text-neutral-200",
         };
-        let display = match piece {
+        let visibility = match piece {
             0 => "opacity-0",
             _ => "",
         };
 
         view! {
-            <div class=format!("w-16 h-16 flex justify-center items-center rounded-lg font-mono text-2xl {colors} {display}")>
+            <div class=format!("w-16 h-16 rounded-lg flex justify-center items-center font-mono text-2xl shadow {colors} {visibility}")>
                 {piece}
             </div>
         }
     };
 
-    // {move || puzzle.with(|puzzle| {
-    //     puzzle
-    //         .iter_indexed()
-    //         .map(|(idx, &piece)| render((idx, piece)))
-    //         .collect_view()
-    // })}
     view! {
-        <div class="flex h-screen items-center">
-            <div class="ml-auto mr-5 grid grid-cols-4 gap-1.5">
-                <For
-                    each=move || puzzle.with(|puzzle| puzzle
-                        .iter_indexed()
-                        .map(|(idx, &piece)| (idx, piece))
-                        .collect::<Vec<_>>())
-                    key=move |&(idx, piece)| (idx, piece)
-                    children=move |(idx, piece)| render((idx, piece))
-                />
-            </div>
-            <div class="mr-auto flex flex-col items-center">
-                <pre class="mb-5">{seed}</pre>
-                <input
-                    readonly
-                    class="font-mono p-2 w-72 bg-stone-100 dark:bg-stone-800 rounded-md outline-none ring-1 focus:ring-2 ring-gray-300 dark:ring-stone-600 focus:ring-inset focus:ring-violet-400 dark:focus:ring-violet-500"
-                    _ref=history_ref
-                    type="text"
-                    on:keydown=on_keydown />
+        <div class="flex h-screen w-full place-content-evenly">
+            <div class="flex my-auto justify-center items-start">
+                <div class="flex flex-col">
+                    <div class="mx-auto mt-auto mb-5 grid grid-cols-4 gap-2">
+                        <For
+                            each=move || puzzle.with(|puzzle| puzzle
+                                .iter_indexed()
+                                .map(|(idx, &piece)| (idx, piece))
+                                .collect::<Vec<_>>())
+                            key=Clone::clone
+                            children=render_piece
+                        />
+                    </div>
+                    <input
+                        readonly
+                        class=move || {
+                            let ring_colors = match dev_mode.get() {
+                                false => "ring-neutral-400 dark:ring-neutral-600 focus:ring-violet-400 focus:dark:ring-violet-500",
+                                true => "ring-yellow-500 dark:ring-yellow-600 focus:ring-yellow-500 focus:dark:ring-yellow-500",
+                            };
+
+                            format!("mx-auto mb-auto w-[17.5rem] p-2 shadow rounded-md outline-none
+                                ring-1 focus:ring-2 focus:ring-inset font-mono bg-neutral-100 dark:bg-neutral-800 {ring_colors}")
+                        }
+                        _ref=history_ref
+                        type="text"
+                        on:keydown=on_keydown />
+                </div>
+                <div class=move || {
+                    let opacity = if dev_mode.get() { "opacity-100" } else { "opacity-0" };
+                    format!("transition-opacity duration-75 {opacity}")
+                }>
+                    <pre class="absolute ml-6 mt-3">
+                        {seed}
+                    </pre>
+                </div>
             </div>
         </div>
     }
