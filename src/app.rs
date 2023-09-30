@@ -16,9 +16,14 @@ use macros::return_with_try;
 #[rustfmt::skip]
 static KEY_IDX_MAP: phf::Map<&'static str, (usize, usize)> = phf::phf_map! {
     "4" => (0, 0), "5" => (1, 0), "6" => (2, 0), "7" => (3, 0),
+
     "r" => (0, 1), "t" => (1, 1), "y" => (2, 1), "u" => (3, 1),
     "f" => (0, 2), "g" => (1, 2), "h" => (2, 2), "j" => (3, 2),
     "v" => (0, 3), "b" => (1, 3), "n" => (2, 3), "m" => (3, 3),
+
+    "R" => (0, 1), "T" => (1, 1), "Y" => (2, 1), "U" => (3, 1),
+    "F" => (0, 2), "G" => (1, 2), "H" => (2, 2), "J" => (3, 2),
+    "V" => (0, 3), "B" => (1, 3), "N" => (2, 3), "M" => (3, 3),
 };
 
 #[derive(Deref, DerefMut)]
@@ -98,7 +103,7 @@ pub fn App(cx: Scope) -> impl IntoView {
                 <pre class="mb-5">{puzzle}</pre>
                 <input
                     readonly
-                    class="font-mono p-2 w-64 bg-gray-100 dark:bg-stone-800 rounded-md outline-none ring-1 focus:ring-2 ring-stone-300 focus:ring-inset focus:ring-violet-600 dark:focus:ring-violet-600"
+                    class="font-mono p-2 w-64 bg-stone-100 dark:bg-stone-800 rounded-md outline-none ring-1 focus:ring-2 ring-gray-300 dark:ring-stone-600 focus:ring-inset focus:ring-violet-400 dark:focus:ring-violet-500"
                     _ref=history_ref
                     type="text"
                     on:keydown=on_keydown />
