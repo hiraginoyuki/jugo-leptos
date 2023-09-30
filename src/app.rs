@@ -3,12 +3,15 @@ use leptos::html::Input;
 use leptos::*;
 
 use derive_more::*;
+use itertools::Itertools;
 use std::ops::Deref;
 
-use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
+use base64::{prelude::*, Engine};
 use jugo::{BoxPuzzle, Piece, Puzzle};
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
+
+use macros::return_with_try;
 
 #[rustfmt::skip]
 static KEY_IDX_MAP: phf::Map<&'static str, (usize, usize)> = phf::phf_map! {
@@ -52,46 +55,54 @@ pub fn App(cx: Scope) -> impl IntoView {
 
     let history_ref = create_node_ref::<Input>(cx);
     create_effect(cx, move |_| {
-        if let Some(input) = history_ref.get() {
-            input.set_value(history.get().as_ref());
+        return_with_try! {
+            let element = history_ref.get()?;
+            element.set_value(history.get().as_ref());
+            element.set_scroll_left(i32::MAX);
         }
     });
 
-    let seed = move || puzzle.with(|puzzle| BASE64_URL_SAFE_NO_PAD.encode(puzzle.seed()));
+    let seed = move || {
+        puzzle.with(|puzzle| {
+            BASE64_URL_SAFE
+                .encode(puzzle.seed())
+                .chars()
+                .chunks(11)
+                .into_iter()
+                .map(|chunk| chunk.collect::<String>())
+                .join("\n")
+        })
+    };
     let puzzle = move || puzzle.with(|puzzle| format!("{}", puzzle.deref()));
-    let on_keydown = move |event: KeyboardEvent| {
-        event.prevent_default();
-
+    let on_keydown = move |event: KeyboardEvent| return_with_try! {
         let key = event.key();
 
         if let Some(&idx) = KEY_IDX_MAP.get(&key) {
-            let d = set_puzzle
-                .try_update(move |p| p.slide_from(idx))
-                .expect("how would this fail?")
+            let moved_for = set_puzzle
+                .try_update(move |p| p.slide_from(idx))?
                 .unwrap_or(0);
-            if d != 0 {
-                set_history.update(move |history| {
-                    history.push_str(&key);
-                });
-            }
-            return;
-        }
 
-        match key.as_ref() {
-            " " => {
-                set_puzzle.update(|p| *p = SeedablePuzzle::new(p.shape()));
-                set_history.update(|history| history.clear());
+            if moved_for != 0 {
+                set_history.update(|history| history.push_str(&key));
             }
-            _ => {}
-        };
+        } else if key == " " {
+            set_puzzle.update(|p| *p = SeedablePuzzle::new(p.shape()));
+            set_history.update(|history| history.clear());
+        }
     };
 
     view! { cx,
-        <pre> {seed} </pre>
-        <pre> {puzzle} </pre>
-        <input
-            _ref=history_ref
-            type="text"
-            on:keydown=on_keydown />
+        <div class="flex h-screen items-center">
+            <div class="m-auto flex flex-col items-center">
+                <pre class="mb-5">{seed}</pre>
+                <pre class="mb-5">{puzzle}</pre>
+                <input
+                    readonly
+                    class="font-mono p-2 w-64 bg-gray-100 dark:bg-stone-800 rounded-md outline-none ring-1 focus:ring-2 ring-stone-300 focus:ring-inset focus:ring-violet-600 dark:focus:ring-violet-600"
+                    _ref=history_ref
+                    type="text"
+                    on:keydown=on_keydown />
+            </div>
+        </div>
     }
 }
