@@ -54,12 +54,12 @@ impl<T: Piece> SeedablePuzzle<T> {
 }
 
 #[component]
-pub fn App(cx: Scope) -> impl IntoView {
-    let (puzzle, set_puzzle) = create_signal(cx, SeedablePuzzle::<u8>::new((4, 4)));
-    let (history, set_history) = create_signal(cx, String::new());
+pub fn App() -> impl IntoView {
+    let (puzzle, set_puzzle) = create_signal(SeedablePuzzle::<u8>::new((4, 4)));
+    let (history, set_history) = create_signal(String::new());
 
-    let history_ref = create_node_ref::<Input>(cx);
-    create_effect(cx, move |_| {
+    let history_ref = create_node_ref::<Input>();
+    create_effect(move |_| {
         return_with_try! {
             let element = history_ref.get()?;
             element.set_value(history.get().as_ref());
@@ -78,7 +78,6 @@ pub fn App(cx: Scope) -> impl IntoView {
                 .join("\n")
         })
     };
-    let puzzle = move || puzzle.with(|puzzle| format!("{}", puzzle.deref()));
     let on_keydown = move |event: KeyboardEvent| return_with_try! {
         let key = event.key();
 
@@ -96,14 +95,48 @@ pub fn App(cx: Scope) -> impl IntoView {
         }
     };
 
-    view! { cx,
+    let render = move |((x, y), piece)| {
+        let solved = (x + 1) + (y * 4) == piece as usize;
+
+        let colors = match solved {
+            true => "bg-white text-black",
+            false => "bg-black text-white",
+        };
+        let display = match piece {
+            0 => "opacity-0",
+            _ => "",
+        };
+
+        view! {
+            <div class=format!("w-16 h-16 flex justify-center items-center rounded-lg font-mono text-2xl {colors} {display}")>
+                {piece}
+            </div>
+        }
+    };
+
+    // {move || puzzle.with(|puzzle| {
+    //     puzzle
+    //         .iter_indexed()
+    //         .map(|(idx, &piece)| render((idx, piece)))
+    //         .collect_view()
+    // })}
+    view! {
         <div class="flex h-screen items-center">
-            <div class="m-auto flex flex-col items-center">
+            <div class="ml-auto mr-5 grid grid-cols-4 gap-1.5">
+                <For
+                    each=move || puzzle.with(|puzzle| puzzle
+                        .iter_indexed()
+                        .map(|(idx, &piece)| (idx, piece))
+                        .collect::<Vec<_>>())
+                    key=move |&(idx, piece)| (idx, piece)
+                    children=move |(idx, piece)| render((idx, piece))
+                />
+            </div>
+            <div class="mr-auto flex flex-col items-center">
                 <pre class="mb-5">{seed}</pre>
-                <pre class="mb-5">{puzzle}</pre>
                 <input
                     readonly
-                    class="font-mono p-2 w-64 bg-stone-100 dark:bg-stone-800 rounded-md outline-none ring-1 focus:ring-2 ring-gray-300 dark:ring-stone-600 focus:ring-inset focus:ring-violet-400 dark:focus:ring-violet-500"
+                    class="font-mono p-2 w-72 bg-stone-100 dark:bg-stone-800 rounded-md outline-none ring-1 focus:ring-2 ring-gray-300 dark:ring-stone-600 focus:ring-inset focus:ring-violet-400 dark:focus:ring-violet-500"
                     _ref=history_ref
                     type="text"
                     on:keydown=on_keydown />
