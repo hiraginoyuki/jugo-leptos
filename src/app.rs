@@ -122,7 +122,7 @@ pub fn App() -> impl IntoView {
     };
 
     view! {
-        <div class="flex h-screen w-full place-content-evenly">
+        <div class="flex h-[100dvh] w-full place-content-evenly">
             <div class="flex my-auto justify-center items-start">
                 <div class="flex flex-col">
                     <div class="mx-auto mt-auto mb-5 grid grid-cols-4 gap-2">
@@ -151,8 +151,12 @@ pub fn App() -> impl IntoView {
                         on:keydown=on_keydown />
                 </div>
                 <div class=move || {
-                    let opacity = if dev_mode.get() { "opacity-100" } else { "opacity-0" };
-                    format!("transition-opacity duration-75 {opacity}")
+                    let styles = match dev_mode.get() {
+                        false => "opacity-0 -translate-x-6",
+                        true => "opacity-100 translate-x-0",
+                    };
+
+                    format!("ease-out transition-all transform-gpu {styles}")
                 }>
                     <pre class="absolute ml-6 mt-3">
                         {seed}
