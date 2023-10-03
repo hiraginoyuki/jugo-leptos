@@ -155,7 +155,7 @@ pub fn App() -> impl IntoView {
     };
 
     raf_loop(move || return_with_try! {
-        let elapsed = solve_time.get().unwrap_or_else(|| match start_time.get() {
+        let elapsed = solve_time.get_untracked().unwrap_or_else(|| match start_time.get_untracked() {
             Some(start_time) => start_time.elapsed(),
             None => Duration::ZERO,
         });
@@ -163,8 +163,8 @@ pub fn App() -> impl IntoView {
         let secs = format!("{:02}", elapsed.as_secs());
         let millis = format!("{:03}", elapsed.subsec_millis());
 
-        timer_secs_ref.get()?.set_text_content(Some(&secs));
-        timer_millis_ref.get()?.set_text_content(Some(&millis));
+        timer_secs_ref.get_untracked()?.set_text_content(Some(&secs));
+        timer_millis_ref.get_untracked()?.set_text_content(Some(&millis));
     });
 
     view! {
@@ -180,15 +180,15 @@ pub fn App() -> impl IntoView {
                 <div class="flex flex-col">
                     <div class="grid grid-flow-col grid-cols-[1fr_min-content_1fr]
                                 child:font-mono child:flex child:items-end">
-                        <div _ref=timer_secs_ref class="text-4xl justify-end">
+                        <div _ref=timer_secs_ref class="text-5xl justify-end">
                             "00"
                         </div>
-                        <div class="text-xl">"."</div>
-                        <div _ref=timer_millis_ref class="text-xl">
+                        <div class="text-2xl">"."</div>
+                        <div _ref=timer_millis_ref class="text-2xl">
                             "000"
                         </div>
                     </div>
-                    <div class="mx-auto mt-3 mb-4 grid grid-cols-4 gap-2">
+                    <div class="mx-auto my-4 grid grid-cols-4 gap-2">
                         <For
                             each=move || puzzle.with(|puzzle| {
                                 puzzle
