@@ -99,7 +99,30 @@ pub fn App() -> impl IntoView {
     let input_ref = create_node_ref::<Input>();
 
     #[rustfmt::skip]
-    let on_keydown = move |event: KeyboardEvent| return_with_try! {
+    let slide = move |idx| {
+        let moved_for = match puzzle.try_update(move |p| p.slide_from(idx)) {
+            Some(Some(n)) if n > 0 => n,
+            _ => return 0,
+        };
+
+        request_animation_frame(move || return_with_try! {
+            input_ref.get_untracked()?.set_scroll_left(i32::MAX);
+        });
+
+        game_state.update(|state| match state {
+            GameState::NotSolving => {
+                *state = GameState::Solving { since: Instant::now() };
+            }
+            GameState::Solving { since } if with!(|puzzle| puzzle.is_solved()) => {
+                *state = GameState::Solved { took: since.elapsed() };
+            }
+            _ => {}
+        });
+
+        moved_for
+    };
+
+    let on_keydown = move |event: KeyboardEvent| {
         let key = event.key();
 
         match key.as_ref() {
@@ -119,59 +142,43 @@ pub fn App() -> impl IntoView {
                 }
             }),
 
-            _ => {
-                let &idx = KEY_IDX_MAP.get(&key)?;
-                let moved_for = puzzle
-                    .try_update(move |p| p.slide_from(idx))?
-                    .unwrap_or(0);
-
-                if moved_for != 0 {
-                    request_animation_frame(move || return_with_try! {
-                        input_ref.get_untracked()?.set_scroll_left(i32::MAX);
-                    });
-
-                    history.update(|history| history.push_str(&key));
-                    game_state.update(|state| *state = match state {
-                        GameState::NotSolving => {
-                            GameState::Solving { since: Instant::now() }
-                        }
-                        GameState::Solving { since } if with!(|puzzle| puzzle.is_solved()) => {
-                            GameState::Solved { took: since.elapsed() }
-                        }
-                        _ => return
-                    });
+            _ => if let Some(&idx) = KEY_IDX_MAP.get(&key) {
+                if slide(idx) > 0 {
+                    update!(|history| history.push_str(&key));
                 }
             }
         }
     };
 
-    let render_piece = move |width| move |piece| {
-        let index = create_memo(move |_| with!(|puzzle| puzzle.index_of(piece).unwrap()));
-        view! {
-            <div
-                class=move || {
-                    let (x, y) = index();
-                    let ideal_piece = y * width + x + 1;
-                    format!(
-                        "absolute w-16 h-16 rounded-lg flex justify-center items-center
+    let render_piece = move |width| {
+        move |piece| {
+            let index = create_memo(move |_| with!(|puzzle| puzzle.index_of(piece).unwrap()));
+            view! {
+                <div
+                    class=move || {
+                        let (x, y) = index();
+                        let ideal_piece = y * width + x + 1;
+                        format!(
+                            "absolute w-16 h-16 rounded-lg flex justify-center items-center
                         font-mono text-2xl shadow transition-all ease-out-circ duration-[100ms]
                         translate-x-[calc(var(--x)*4.5rem)] translate-y-[calc(var(--y)*4.5rem)]
-                        {} {}",
-                        match ideal_piece == piece as usize { // is_solved
-                            true => "bg-neutral-100 dark:bg-neutral-200 text-neutral-800",
-                            false => "bg-neutral-900 dark:bg-neutral-800 text-neutral-200",
-                        },
-                        match piece {
-                            0 => "opacity-0",
-                            _ => "",
-                        },
-                    )
-                }
-                style=("--x", move || index().0)
-                style=("--y", move || index().1)
-            >
-                {piece}
-            </div>
+                        pointer-events-none {} {}",
+                            match ideal_piece == piece as usize { // is_solved
+                                true => "bg-neutral-100 dark:bg-neutral-200 text-neutral-800",
+                                false => "bg-neutral-900 dark:bg-neutral-800 text-neutral-200",
+                            },
+                            match piece {
+                                0 => "opacity-0",
+                                _ => "",
+                            },
+                        )
+                    }
+                    style=("--x", move || index().0)
+                    style=("--y", move || index().1)
+                >
+                    {piece}
+                </div>
+            }
         }
     };
 
@@ -208,29 +215,28 @@ pub fn App() -> impl IntoView {
                         <div class="text-2xl" _ref=timer_millis_ref>"000"</div>
                     </div>
                     <div class="mx-auto my-4 grid grid-cols-4 gap-2">
-                        {move || shape.with(|&(width, height)| {
-                            (0..width * height)
-                                .map(render_piece(width))
-                                .collect::<Vec<_>>()
-                        })}
-                        {move || shape.with(|&(width, height)| {
-                            (0..width * height)
-                                .map(|index| {
-                                    let slide = move || {
-                                        puzzle.update(|p| {
-                                            p.slide_from((index % width, index / width));
-                                        });
-                                    };
-                                    view! {
-                                        <div
-                                            class="w-16 h-16"
-                                            on:mousedown=move |_| slide()
-                                            on:touchstart=move |_| slide()
-                                        />
-                                    }
-                                })
-                                .collect::<Vec<_>>()
-                        })}
+                        {move || shape.with(|&(width, height)| (0..width * height)
+                            .map(render_piece(width))
+                            .collect::<Vec<_>>()
+                        )}
+                        {move || shape.with(|&(width, height)| (0..width * height)
+                            .map(|index| {
+                                let slide = move |event: Event| {
+                                    event.prevent_default();
+                                    slide((index % width, index / width));
+                                };
+                                view! {
+                                    <div
+                                        class="w-16 h-16"
+                                        on:mousedown=move |e| slide(e.into())
+                                        on:mousemove=move |e| if e.buttons() & 1 == 1 { slide(e.into()) }
+                                        on:touchstart=move |e| slide(e.into())
+                                        // on:touchmove=move |e| slide(e.into())
+                                    />
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                        )}
                     </div>
                     <input _ref=input_ref
                         type="text"
