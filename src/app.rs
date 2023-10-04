@@ -1,16 +1,15 @@
 use std::time::Duration;
 use wasm_timer::Instant;
 
-use leptos::{ev::KeyboardEvent, html::Input, html::Div};
-use leptos::*;
+use leptos::{ev::*, html::*, *};
 
+use base64::{prelude::*, Engine};
 use derive_more::*;
 use itertools::Itertools;
-use base64::{prelude::*, Engine};
 use jugo::{BoxPuzzle, Piece, Puzzle};
+use macros::return_with_try;
 use rand::{Rng, SeedableRng};
 use rand_xoshiro::Xoshiro256StarStar;
-use macros::return_with_try;
 
 #[rustfmt::skip]
 static KEY_IDX_MAP: phf::Map<&'static str, (usize, usize)> = phf::phf_map! {
@@ -59,120 +58,144 @@ impl<T: Piece> SeedablePuzzle<T> {
     }
 }
 
+#[derive(Clone, Debug)]
+enum GameState {
+    NotSolving,
+    Solving { since: Instant },
+    Solved { took: Duration },
+}
+
+impl GameState {
+    pub fn solve_time(&self) -> Option<Duration> {
+        match self {
+            GameState::Solving { since } => Some(since.elapsed()),
+            GameState::Solved { took } => Some(*took),
+            _ => None,
+        }
+    }
+}
+
 #[component]
 pub fn App() -> impl IntoView {
-    let puzzle = create_rw_signal(SeedablePuzzle::<u8>::new((4, 4)));
-    let history = create_rw_signal(String::new());
-    let dev_mode = create_rw_signal(false);
-
-    let start_time = create_rw_signal(None::<Instant>);
-    let solve_time = create_rw_signal(None::<Duration>);
-    let timer_secs_ref = create_node_ref::<Div>();
-    let timer_millis_ref = create_node_ref::<Div>();
-
-    let input_ref = create_node_ref::<Input>();
-    create_effect(move |_| return_with_try! {
-        history.with(|_| ()); // hack: track dependency
-        input_ref.get()?.set_scroll_left(i32::MAX);
+    let puzzle = create_rw_signal(SeedablePuzzle::<usize>::new((4, 4)));
+    let shape = create_memo(move |_| with!(|puzzle| puzzle.shape()));
+    let seed = create_memo(move |_| with!(|puzzle| *puzzle.seed()));
+    let seed_formatted = create_memo(move |_| {
+        BASE64_URL_SAFE
+            .encode(seed())
+            .chars()
+            .chunks(11)
+            .into_iter()
+            .map(|chunk| chunk.collect::<String>())
+            .join("\n")
     });
 
-    let seed_formatted = move || {
-        puzzle.with(|puzzle| {
-            BASE64_URL_SAFE
-                .encode(puzzle.seed())
-                .chars()
-                .chunks(11)
-                .into_iter()
-                .map(|chunk| chunk.collect::<String>())
-                .join("\n")
-        })
-    };
+    let history = create_rw_signal(String::new());
+    let dev_mode = create_rw_signal(false);
+    let game_state = create_rw_signal(GameState::NotSolving);
 
+    let timer_secs_ref = create_node_ref::<Div>();
+    let timer_millis_ref = create_node_ref::<Div>();
+    let input_ref = create_node_ref::<Input>();
+
+    #[rustfmt::skip]
     let on_keydown = move |event: KeyboardEvent| return_with_try! {
         let key = event.key();
 
-        if let Some(&idx) = KEY_IDX_MAP.get(&key) {
-            let moved_for = puzzle
-                .try_update(move |p| p.slide_from(idx))?
-                .unwrap_or(0);
-
-            if moved_for != 0 {
-                history.update(|history| history.push_str(&key));
-                start_time.update(|start_time| {
-                    match start_time {
-                        None => {
-                            _ = start_time.insert(Instant::now());
-                        }
-                        Some(time) if puzzle.with(|p| p.is_solved()) => {
-                            solve_time.set(Some(time.elapsed()));
-                        }
-                        _ => {}
-                    };
-                });
-            }
-        }
-        
         match key.as_ref() {
             " " => {
                 puzzle.update(|p| *p = SeedablePuzzle::new(p.shape()));
                 history.update(|history| history.clear());
-                start_time.set(None);
-                solve_time.set(None);
+                game_state.set(GameState::NotSolving);
             }
-            "D" => {
-                dev_mode.update(|dev_mode| *dev_mode = !*dev_mode);
+
+            "D" => dev_mode.update(|dev_mode| *dev_mode = !*dev_mode),
+
+            "1" => game_state.set(GameState::NotSolving),
+            "2" => game_state.set(GameState::Solving { since: Instant::now() }),
+            "3" => game_state.update(|state| {
+                if let GameState::Solving { since } = state {
+                    *state = GameState::Solved { took: since.elapsed() };
+                }
+            }),
+
+            _ => {
+                let &idx = KEY_IDX_MAP.get(&key)?;
+                let moved_for = puzzle
+                    .try_update(move |p| p.slide_from(idx))?
+                    .unwrap_or(0);
+
+                if moved_for != 0 {
+                    request_animation_frame(move || return_with_try! {
+                        input_ref.get_untracked()?.set_scroll_left(i32::MAX);
+                    });
+
+                    history.update(|history| history.push_str(&key));
+                    game_state.update(|state| *state = match state {
+                        GameState::NotSolving => {
+                            GameState::Solving { since: Instant::now() }
+                        }
+                        GameState::Solving { since } if with!(|puzzle| puzzle.is_solved()) => {
+                            GameState::Solved { took: since.elapsed() }
+                        }
+                        _ => return
+                    });
+                }
             }
-            "1" => {
-                start_time.set(None);
-                solve_time.set(None)
-            }
-            "2" => {
-                start_time.set(Some(Instant::now()));
-            }
-            "3" => {
-                solve_time.set(Some(start_time.get()?.elapsed()));
-            }
-            _ => {}
         }
     };
-    let render_piece = |(index, piece)| {
-        let solved = index + 1 == piece as usize;
-        let colors = match solved {
-            true => "bg-neutral-100 dark:bg-neutral-200 text-neutral-800",
-            false => "bg-neutral-900 dark:bg-neutral-800 text-neutral-200",
-        };
-        let visibility = match piece {
-            0 => "opacity-0",
-            _ => "",
-        };
 
+    let render_piece = move |width| move |piece| {
+        let index = create_memo(move |_| with!(|puzzle| puzzle.index_of(piece).unwrap()));
         view! {
-            <div class=format!("w-16 h-16 rounded-lg flex justify-center items-center transition-all ease-out duration-75
-                                font-mono text-2xl shadow {colors} {visibility}")>
+            <div
+                class=move || {
+                    let (x, y) = index();
+                    let ideal_piece = y * width + x + 1;
+                    format!(
+                        "absolute w-16 h-16 rounded-lg flex justify-center items-center
+                        font-mono text-2xl shadow transition-all ease-out-circ duration-[100ms]
+                        translate-x-[calc(var(--x)*4.5rem)] translate-y-[calc(var(--y)*4.5rem)]
+                        {} {}",
+                        match ideal_piece == piece as usize { // is_solved
+                            true => "bg-neutral-100 dark:bg-neutral-200 text-neutral-800",
+                            false => "bg-neutral-900 dark:bg-neutral-800 text-neutral-200",
+                        },
+                        match piece {
+                            0 => "opacity-0",
+                            _ => "",
+                        },
+                    )
+                }
+                style=("--x", move || index().0)
+                style=("--y", move || index().1)
+            >
                 {piece}
             </div>
         }
     };
 
-    raf_loop(move || return_with_try! {
-        let elapsed = solve_time.get_untracked().unwrap_or_else(|| match start_time.get_untracked() {
-            Some(start_time) => start_time.elapsed(),
-            None => Duration::ZERO,
-        });
+    #[rustfmt::skip]
+    create_render_effect(move |_| {
+        raf_loop(move || return_with_try! {
+            let time = game_state
+                .with_untracked(|state| state.solve_time())
+                .unwrap_or(Duration::ZERO);
 
-        let secs = format!("{:02}", elapsed.as_secs());
-        let millis = format!("{:03}", elapsed.subsec_millis());
+            let secs = format!("{:02}", time.as_secs());
+            let millis = format!("{:03}", time.subsec_millis());
 
-        timer_secs_ref.get_untracked()?.set_text_content(Some(&secs));
-        timer_millis_ref.get_untracked()?.set_text_content(Some(&millis));
+            timer_secs_ref.get_untracked()?.set_text_content(Some(&secs));
+            timer_millis_ref.get_untracked()?.set_text_content(Some(&millis));
+        })
     });
 
     view! {
         <div class="flex h-[100dvh] w-full place-content-evenly">
             <div class=move || format!(
                 "flex my-auto justify-center items-start
-                ease-out transition-all transform-gpu duration-150 {}",
-                match dev_mode.get() {
+                ease-out-circ transition-all transform-gpu duration-150 {}",
+                match dev_mode() {
                     false => "translate-x-0",
                     true => "-translate-x-16",
                 },
@@ -180,25 +203,34 @@ pub fn App() -> impl IntoView {
                 <div class="flex flex-col">
                     <div class="grid grid-flow-col grid-cols-[1fr_min-content_1fr]
                                 child:font-mono child:flex child:items-end">
-                        <div _ref=timer_secs_ref class="text-5xl justify-end">
-                            "00"
-                        </div>
+                        <div class="text-5xl justify-end" _ref=timer_secs_ref>"00"</div>
                         <div class="text-2xl">"."</div>
-                        <div _ref=timer_millis_ref class="text-2xl">
-                            "000"
-                        </div>
+                        <div class="text-2xl" _ref=timer_millis_ref>"000"</div>
                     </div>
                     <div class="mx-auto my-4 grid grid-cols-4 gap-2">
-                        <For
-                            each=move || puzzle.with(|puzzle| {
-                                puzzle
-                                    .iter()
-                                    .cloned()
-                                    .enumerate()
-                                    .collect::<Vec<_>>()
-                            })
-                            key=Clone::clone
-                            children=render_piece />
+                        {move || shape.with(|&(width, height)| {
+                            (0..width * height)
+                                .map(render_piece(width))
+                                .collect::<Vec<_>>()
+                        })}
+                        {move || shape.with(|&(width, height)| {
+                            (0..width * height)
+                                .map(|index| {
+                                    let slide = move || {
+                                        puzzle.update(|p| {
+                                            p.slide_from((index % width, index / width));
+                                        });
+                                    };
+                                    view! {
+                                        <div
+                                            class="w-16 h-16"
+                                            on:mousedown=move |_| slide()
+                                            on:touchstart=move |_| slide()
+                                        />
+                                    }
+                                })
+                                .collect::<Vec<_>>()
+                        })}
                     </div>
                     <input _ref=input_ref
                         type="text"
@@ -206,30 +238,28 @@ pub fn App() -> impl IntoView {
                         class=move || format!(
                             "mx-auto mb-auto w-[17.5rem] p-2 shadow rounded-md outline-none
                             ring-inset ring-1 focus:ring-2 font-mono bg-neutral-100 dark:bg-neutral-800 
-                            transition-all ease-out duration-[40ms] {}",
-                            match dev_mode.get() {
+                            transition-all ease-out-circ duration-[40ms] {}",
+                            match dev_mode() {
                                 false => "ring-neutral-400 dark:ring-neutral-600 focus:ring-violet-400 focus:dark:ring-violet-500",
                                 true => "ring-yellow-500 dark:ring-yellow-600 focus:ring-yellow-500 focus:dark:ring-yellow-500",
                             }
                         )
                         on:keydown=on_keydown
-                        prop:value=history />
+                        prop:value=history
+                    />
                 </div>
                 <div class=move || format!(
-                    "ease-out transition-all transform-gpu duration-150 {}",
-                    match dev_mode.get() {
+                    "ease-out-circ transition-all transform-gpu duration-150 {}",
+                    match dev_mode() {
                         false => "-translate-x-6 opacity-0",
                         true => "translate-x-0",
                     },
                 )>
                     <AnimatedShow when=dev_mode hide_delay=Duration::from_millis(150)>
                         <div class="absolute ml-6 mt-3">
-                            <pre class="mb-3">
-                                {seed_formatted}
-                            </pre>
-                            <pre class="text-sm">"start_time: "{move || format!("{:?}", start_time.get())}</pre>
-                            <pre class="text-sm">"solve_time: "{move || format!("{:?}", solve_time.get())}</pre>
-                            <pre class="text-sm">"is_solved(): "{move || puzzle.with(|p| p.is_solved())}</pre>
+                            <pre class="mb-3">{seed_formatted}</pre>
+                            <pre class="text-sm">"is_solved(): "{move || with!(|puzzle| puzzle.is_solved())}</pre>
+                            <pre class="text-sm">"game_state: "{move || format!("{:#?}", game_state())}</pre>
                         </div>
                     </AnimatedShow>
                 </div>
