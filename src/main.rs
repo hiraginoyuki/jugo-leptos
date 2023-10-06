@@ -1,6 +1,8 @@
 mod app;
 use app::App;
 
+pub(crate) mod signal_ext;
+
 use leptos::*;
 
 fn main() {
